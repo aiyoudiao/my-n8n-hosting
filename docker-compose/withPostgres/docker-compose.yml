@@ -1,44 +1,69 @@
 version: '3.8'
 
-volumes:
-  db_storage:
-  n8n_storage:
-
 services:
   postgres:
-    image: postgres:16
+    image: postgres:15
+    container_name: postgres
     restart: always
     environment:
-      - POSTGRES_USER
-      - POSTGRES_PASSWORD
-      - POSTGRES_DB
-      - POSTGRES_NON_ROOT_USER
-      - POSTGRES_NON_ROOT_PASSWORD
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - db_storage:/var/lib/postgresql/data
-      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+      - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -h postgres -U ${POSTGRES_USER}']
       interval: 5s
       timeout: 5s
       retries: 10
+    ports:
+      - "5432:5432"  # 将容器的 5432 端口暴露到宿主机的 5432 端口
 
   n8n:
-    image: docker.n8n.io/n8nio/n8n
+    image: n8nio/n8n:latest
+    container_name: n8n
     restart: always
     environment:
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
-      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - DB_POSTGRESDB_DATABASE=${N8N_DB_DATABASE}
+      - DB_POSTGRESDB_USER=${N8N_DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - LANG=zh_CN.UTF-8  # 添加这一行来设置中文
     ports:
       - 5678:5678
-    links:
-      - postgres
-    volumes:
-      - n8n_storage:/home/node/.n8n
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  backup:
+    image: postgres:15
+    container_name: postgres_backup
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backup:/backup
+    entrypoint: |
+      bash -c '
+      mkdir -p /backup;
+      while true; do
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S");
+        pg_dump -h postgres -U ${POSTGRES_USER} ${POSTGRES_DB} > /backup/db_backup_$TIMESTAMP.sql;
+        echo "Backup created at /backup/db_backup_$TIMESTAMP.sql";
+        sleep 86400; # 24小時備份一次
+      done
+      '
+
+volumes:
+  db_data:
+  n8n_data:
